@@ -11,10 +11,6 @@ input_path = script_dir / "Am_AcusticPlug28_1.wav"
 output_2_path = script_dir / "reverberated_2power.wav"
 output_3_path = script_dir / "reverberated_3power.wav"
 
-sample_rate, original = wavfile.read(input_path)
-if original.ndim != 2 or original.shape[1] != 2:
-    raise ValueError("This script expects a stereo WAV file with two channels.")
-
 # Convert PCM integers to floating point.
 if np.issubdtype(original.dtype, np.integer):
     info = np.iinfo(original.dtype)
