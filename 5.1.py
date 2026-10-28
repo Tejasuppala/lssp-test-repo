@@ -5,12 +5,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.io import wavfile
 
-# Put the input WAV beside this Python script.
+# Put the stereo input WAV beside this Python script.
 script_dir = Path(__file__).resolve().parent
 input_path = script_dir / "Am_AcusticPlug28_1.wav"
 output_path = script_dir / "reverberated_3power.wav"
 
 sample_rate, original = wavfile.read(input_path)
+if original.ndim != 2 or original.shape[1] != 2:
+    raise ValueError("This script expects a stereo WAV file with two channels.")
 
 # Convert PCM integers to floating point.
 if np.issubdtype(original.dtype, np.integer):
@@ -35,7 +37,7 @@ for delay, amplitude in zip(delay_samples, amplitudes):
 
 
 def manual_convolve(signal, impulse_response):
-    """Convolve one 1-D signal with a 1-D impulse response."""
+    """Convolve one 1-D channel with the impulse response manually."""
     output = np.zeros(
         len(signal) + len(impulse_response) - 1,
         dtype=np.float32
@@ -48,22 +50,19 @@ def manual_convolve(signal, impulse_response):
     return output
 
 
-# Apply the impulse response to mono or stereo audio.
-if audio.ndim == 1:
-    processed = manual_convolve(audio, impulse_response)
-else:
-    processed = np.column_stack([
-        manual_convolve(audio[:, channel], impulse_response)
-        for channel in range(audio.shape[1])
-    ])
+# Convolve the left and right channels independently.
+processed = np.column_stack([
+    manual_convolve(audio[:, channel], impulse_response)
+    for channel in range(2)
+])
 
-# Avoid clipping and save as floating-point WAV.
+# Avoid clipping and save the stereo result as floating-point audio.
 peak = np.max(np.abs(processed))
 if peak > 1:
     processed = processed / peak
 
 wavfile.write(output_path, sample_rate, processed.astype(np.float32))
-print(f"Saved reverberant audio to: {output_path}")
+print(f"Saved reverberant audio: {output_path}")
 
 # Plot the impulse response.
 time = np.arange(len(impulse_response)) / sample_rate
@@ -75,10 +74,6 @@ plt.ylabel("Amplitude")
 plt.title("Impulse response: reflection amplitudes decrease as powers of 1/3")
 plt.grid(True)
 plt.tight_layout()
-
-# Compare magnitude spectra. For stereo, use the first channel.
-original_mono = audio if audio.ndim == 1 else audio[:, 0]
-processed_mono = processed if processed.ndim == 1 else processed[:, 0]
 
 
 def fft(signal):
@@ -138,16 +133,28 @@ def magnitude_spectrum(signal):
         for k in range(positive_length)
     ]
     return frequencies, magnitude_db
-f_original, mag_original = magnitude_spectrum(original_mono)
-f_processed, mag_processed = magnitude_spectrum(processed_mono)
 
-plt.figure(figsize=(10, 4))
-plt.plot(f_original, mag_original, label="Original", alpha=0.8)
-plt.plot(f_processed, mag_processed, label="Reverberated", alpha=0.8)
-plt.xlabel("Frequency (Hz)")
-plt.ylabel("Magnitude (dB)")
-plt.title("Original and reverberated magnitude spectra")
-plt.legend()
-plt.grid(True)
-plt.tight_layout()
+
+# Compare the original and processed spectra for both stereo channels.
+channel_spectra = []
+for channel in range(2):
+    channel_spectra.append((
+        magnitude_spectrum(audio[:, channel]),
+        magnitude_spectrum(processed[:, channel])
+    ))
+
+fig, axes = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
+for channel, axis in enumerate(axes):
+    (f_original, mag_original), (f_processed, mag_processed) = channel_spectra[channel]
+    channel_name = "Left" if channel == 0 else "Right"
+    axis.plot(f_original, mag_original, label="Original", alpha=0.8)
+    axis.plot(f_processed, mag_processed, label="Reverberated", alpha=0.8)
+    axis.set_ylabel("Magnitude (dB)")
+    axis.set_title(f"{channel_name} channel")
+    axis.legend()
+    axis.grid(True)
+
+axes[-1].set_xlabel("Frequency (Hz)")
+fig.suptitle("Original and reverberated magnitude spectra")
+fig.tight_layout()
 plt.show()
