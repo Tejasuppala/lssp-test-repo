@@ -10,10 +10,6 @@ script_dir = Path(__file__).resolve().parent
 input_path = script_dir / "Am_AcusticPlug28_1.wav"
 output_path = script_dir / "reverberated_3power.wav"
 
-sample_rate, original = wavfile.read(input_path)
-if original.ndim != 2 or original.shape[1] != 2:
-    raise ValueError("This script expects a stereo WAV file with two channels.")
-
 # Convert PCM integers to floating point.
 if np.issubdtype(original.dtype, np.integer):
     info = np.iinfo(original.dtype)
@@ -118,7 +114,6 @@ def fft(signal):
 
     return values
 
-
 def magnitude_spectrum(signal):
     spectrum = fft(signal)
     fft_length = len(spectrum)
@@ -133,7 +128,6 @@ def magnitude_spectrum(signal):
         for k in range(positive_length)
     ]
     return frequencies, magnitude_db
-
 
 # Compare the original and processed spectra for both stereo channels.
 channel_spectra = []
