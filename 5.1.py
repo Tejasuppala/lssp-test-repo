@@ -1,4 +1,5 @@
 from pathlib import Path
+import math
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -80,13 +81,63 @@ original_mono = audio if audio.ndim == 1 else audio[:, 0]
 processed_mono = processed if processed.ndim == 1 else processed[:, 0]
 
 
+def fft(signal):
+    """Compute an FFT with the radix-2 Cooley-Tukey algorithm.
+
+    The signal is zero-padded to the next power of two.
+    """
+    values = [complex(value) for value in signal]
+
+    fft_length = 1
+    while fft_length < len(values):
+        fft_length *= 2
+    values.extend([0j] * (fft_length - len(values)))
+
+    # Reorder samples by reversing their binary indices.
+    j = 0
+    for i in range(1, fft_length):
+        bit = fft_length >> 1
+        while j & bit:
+            j ^= bit
+            bit >>= 1
+        j ^= bit
+        if i < j:
+            values[i], values[j] = values[j], values[i]
+
+    # Combine pairs of smaller transforms into larger transforms.
+    size = 2
+    while size <= fft_length:
+        half_size = size // 2
+        angle = -2 * math.pi / size
+        step = complex(math.cos(angle), math.sin(angle))
+
+        for start in range(0, fft_length, size):
+            twiddle = 1 + 0j
+            for offset in range(half_size):
+                even = values[start + offset]
+                odd = twiddle * values[start + offset + half_size]
+                values[start + offset] = even + odd
+                values[start + offset + half_size] = even - odd
+                twiddle *= step
+        size *= 2
+
+    return values
+
+
 def magnitude_spectrum(signal):
-    spectrum = np.fft.rfft(signal)
-    frequencies = np.fft.rfftfreq(len(signal), d=1 / sample_rate)
-    magnitude_db = 20 * np.log10(np.maximum(np.abs(spectrum), 1e-10))
+    spectrum = fft(signal)
+    fft_length = len(spectrum)
+    positive_length = fft_length // 2 + 1
+
+    frequencies = [
+        k * sample_rate / fft_length
+        for k in range(positive_length)
+    ]
+    magnitude_db = [
+        20 * math.log10(max(abs(spectrum[k]), 1e-10))
+        for k in range(positive_length)
+    ]
     return frequencies, magnitude_db
-
-
 f_original, mag_original = magnitude_spectrum(original_mono)
 f_processed, mag_processed = magnitude_spectrum(processed_mono)
 
