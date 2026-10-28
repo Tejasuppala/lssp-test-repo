@@ -5,12 +5,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.io import wavfile
 
-
-# Find the input WAV beside this script.
+# Put the stereo input WAV beside this Python script.
 script_dir = Path(__file__).resolve().parent
 input_path = script_dir / "Am_AcusticPlug28_1.wav"
 
 sample_rate, original = wavfile.read(input_path)
+if original.ndim != 2 or original.shape[1] != 2:
+    raise ValueError("This script expects a stereo WAV file with two channels.")
 
 # Convert integer PCM samples to floating point.
 if np.issubdtype(original.dtype, np.integer):
@@ -20,14 +21,7 @@ if np.issubdtype(original.dtype, np.integer):
 else:
     audio = original.astype(np.float32)
 
-# Make audio consistently 2-D so mono and stereo use the same code.
-if audio.ndim == 1:
-    channels = audio[:, np.newaxis]
-else:
-    channels = audio
-
-num_samples, num_channels = channels.shape
-
+num_samples, num_channels = audio.shape
 
 # Echo settings.
 alpha = 0.5
@@ -40,41 +34,32 @@ delta_D = round(delta_D_seconds * sample_rate)
 
 n = np.arange(num_samples)
 
-
-# Fixed-delay echo.
-fixed = channels.copy()
-
+# Fixed-delay echo, for comparison.
+fixed = audio.copy()
 if D0 < num_samples:
-    fixed[D0:] += alpha * channels[:-D0]
+    fixed[D0:] += alpha * audio[:-D0]
 
-
-# Time-varying delay:
-# D(n) = D0 + delta_D * sin(2*pi*fm*n/sample_rate)
+# Time-varying delay: D(n) = D0 + delta_D * sin(2*pi*fm*n/fs).
 variable_delays = np.rint(
     D0 + delta_D * np.sin(2 * np.pi * fm * n / sample_rate)
 ).astype(int)
 
-time_varying = channels.copy()
+time_varying = audio.copy()
 source_indices = n - variable_delays
 valid = source_indices >= 0
 
+# Apply the variable delay independently to the left and right channels.
 for channel in range(num_channels):
     time_varying[valid, channel] += (
-        alpha * channels[source_indices[valid], channel]
+        alpha * audio[source_indices[valid], channel]
     )
 
 
-# Save both outputs as floating-point WAV files.
+# Save the stereo output as a floating-point WAV file.
 def save_float_wav(path, signal):
-    # Reduce the signal only if it would exceed the normal audio range.
     peak = np.max(np.abs(signal))
     if peak > 1:
         signal = signal / peak
-
-    # Write mono audio as a 1-D array.
-    if signal.shape[1] == 1:
-        signal = signal[:, 0]
-
     wavfile.write(path, sample_rate, signal.astype(np.float32))
 
 
@@ -87,36 +72,33 @@ save_float_wav(variable_path, time_varying)
 print(f"Saved fixed-delay echo: {fixed_path}")
 print(f"Saved time-varying echo: {variable_path}")
 
-
-# Plot the first 0.1 seconds of channel 1.
+# Plot the first 0.1 seconds for the left and right channels.
 view_samples = min(num_samples, int(0.1 * sample_rate))
 time = np.arange(view_samples) / sample_rate
 
-plt.figure(figsize=(10, 4))
-plt.plot(time, channels[:view_samples, 0], label="Original", alpha=0.8)
-plt.plot(time, fixed[:view_samples, 0], label="Fixed-delay echo", alpha=0.8)
-plt.plot(
-    time,
-    time_varying[:view_samples, 0],
-    label="Time-varying echo",
-    alpha=0.8
-)
-plt.xlabel("Time (seconds)")
-plt.ylabel("Amplitude")
-plt.title("Waveform comparison (first 0.1 seconds)")
-plt.legend()
-plt.grid(True)
-plt.tight_layout()
+fig, axes = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
+for channel, axis in enumerate(axes):
+    channel_name = "Left" if channel == 0 else "Right"
+    axis.plot(time, audio[:view_samples, channel], label="Original", alpha=0.8)
+    axis.plot(time, fixed[:view_samples, channel], label="Fixed-delay echo", alpha=0.8)
+    axis.plot(time, time_varying[:view_samples, channel], label="Time-varying echo", alpha=0.8)
+    axis.set_ylabel("Amplitude")
+    axis.set_title(f"{channel_name} channel")
+    axis.legend()
+    axis.grid(True)
+
+axes[-1].set_xlabel("Time (seconds)")
+fig.suptitle("Waveform comparison (first 0.1 seconds)")
+fig.tight_layout()
 
 
 def fft(signal):
-    """Compute the FFT using the Cooley–Tukey algorithm.
+    """Compute the FFT using the Cooley-Tukey radix-2 algorithm.
 
     The input is zero-padded to the next power of two.
     """
     values = [complex(value) for value in signal]
 
-    # Pad the input length to a power of two.
     fft_length = 1
     while fft_length < len(values):
         fft_length *= 2
@@ -126,13 +108,10 @@ def fft(signal):
     j = 0
     for i in range(1, fft_length):
         bit = fft_length >> 1
-
         while j & bit:
             j ^= bit
             bit >>= 1
-
         j ^= bit
-
         if i < j:
             values[i], values[j] = values[j], values[i]
 
@@ -145,28 +124,23 @@ def fft(signal):
 
         for start in range(0, fft_length, size):
             twiddle = 1 + 0j
-
             for offset in range(half_size):
                 even = values[start + offset]
                 odd = twiddle * values[start + offset + half_size]
-
                 values[start + offset] = even + odd
                 values[start + offset + half_size] = even - odd
                 twiddle *= step
-
         size *= 2
 
     return values
 
 
-# Compare spectra using the first five seconds to keep plotting manageable.
+# Compare spectra from the first five seconds for both channels.
 segment_samples = min(num_samples, int(5 * sample_rate))
 
 
-def magnitude_spectrum(signal):
-    # Use channel 1 and the selected short segment.
-    segment = signal[:segment_samples, 0]
-
+def magnitude_spectrum(signal, channel):
+    segment = signal[:segment_samples, channel]
     spectrum = fft(segment)
     fft_length = len(spectrum)
     positive_length = fft_length // 2 + 1
@@ -179,23 +153,25 @@ def magnitude_spectrum(signal):
         20 * math.log10(max(abs(spectrum[k]), 1e-10))
         for k in range(positive_length)
     ]
-
     return frequencies, magnitude_db
 
 
-f_original, mag_original = magnitude_spectrum(channels)
-f_fixed, mag_fixed = magnitude_spectrum(fixed)
-f_variable, mag_variable = magnitude_spectrum(time_varying)
+fig, axes = plt.subplots(2, 1, figsize=(10, 7), sharex=True)
+for channel, axis in enumerate(axes):
+    channel_name = "Left" if channel == 0 else "Right"
+    f_original, mag_original = magnitude_spectrum(audio, channel)
+    f_fixed, mag_fixed = magnitude_spectrum(fixed, channel)
+    f_variable, mag_variable = magnitude_spectrum(time_varying, channel)
 
-plt.figure(figsize=(10, 4))
-plt.plot(f_original, mag_original, label="Original", alpha=0.8)
-plt.plot(f_fixed, mag_fixed, label="Fixed-delay echo", alpha=0.8)
-plt.plot(f_variable, mag_variable, label="Time-varying echo", alpha=0.8)
-plt.xlabel("Frequency (Hz)")
-plt.ylabel("Magnitude (dB)")
-plt.title("Magnitude spectrum comparison (first 5 seconds)")
-plt.legend()
-plt.grid(True)
-plt.tight_layout()
+    axis.plot(f_original, mag_original, label="Original", alpha=0.8)
+    axis.plot(f_fixed, mag_fixed, label="Fixed-delay echo", alpha=0.8)
+    axis.plot(f_variable, mag_variable, label="Time-varying echo", alpha=0.8)
+    axis.set_ylabel("Magnitude (dB)")
+    axis.set_title(f"{channel_name} channel")
+    axis.legend()
+    axis.grid(True)
 
+axes[-1].set_xlabel("Frequency (Hz)")
+fig.suptitle("Magnitude spectrum comparison (first 5 seconds)")
+fig.tight_layout()
 plt.show()
