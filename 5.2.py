@@ -1,4 +1,5 @@
 from pathlib import Path
+import cmath
 import math
 
 import matplotlib.pyplot as plt
@@ -93,47 +94,32 @@ fig.tight_layout()
 
 
 def fft(signal):
-    """Compute the FFT using the Cooley-Tukey radix-2 algorithm.
+    """Compute the DFT recursively with the radix-2 Cooley-Tukey algorithm.
 
-    The input is zero-padded to the next power of two.
+    The input is zero-padded to the next power of two before splitting.
     """
-    values = [complex(value) for value in signal]
+    N = len(signal)
+    if N == 0:
+        return []
+    if N <= 1:
+        return signal
 
-    fft_length = 1
-    while fft_length < len(values):
-        fft_length *= 2
-    values.extend([0j] * (fft_length - len(values)))
+    # Pad once, at the top level, so recursive halves stay powers of two.
+    if N & (N - 1):
+        next_pow2 = 1 << (N - 1).bit_length()
+        signal = list(signal) + [0] * (next_pow2 - N)
+        N = next_pow2
 
-    # Reorder values by reversing their binary indices.
-    j = 0
-    for i in range(1, fft_length):
-        bit = fft_length >> 1
-        while j & bit:
-            j ^= bit
-            bit >>= 1
-        j ^= bit
-        if i < j:
-            values[i], values[j] = values[j], values[i]
+    even = fft(signal[0::2])
+    odd = fft(signal[1::2])
 
-    # Calculate the FFT in stages.
-    size = 2
-    while size <= fft_length:
-        half_size = size // 2
-        angle = -2 * math.pi / size
-        step = complex(math.cos(angle), math.sin(angle))
+    combined = [0] * N
+    for k in range(N // 2):
+        twiddle = cmath.exp(-2j * cmath.pi * k / N)
+        combined[k] = even[k] + twiddle * odd[k]
+        combined[k + N // 2] = even[k] - twiddle * odd[k]
 
-        for start in range(0, fft_length, size):
-            twiddle = 1 + 0j
-            for offset in range(half_size):
-                even = values[start + offset]
-                odd = twiddle * values[start + offset + half_size]
-                values[start + offset] = even + odd
-                values[start + offset + half_size] = even - odd
-                twiddle *= step
-        size *= 2
-
-    return values
-
+    return combined
 
 # Compare spectra from the first five seconds for both channels.
 segment_samples = min(num_samples, int(5 * sample_rate))
